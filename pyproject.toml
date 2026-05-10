@@ -1,0 +1,27 @@
+[project]
+name = "sol-agent-wallet"
+version = "0.1.0"
+description = "The first write-capable Solana AI agent — swap tokens, stake SOL, lend, transfer, and manage your wallet through natural language"
+authors = [{ name = "Yoshi Kondo", email = "yoshi@musicailab.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "solders>=0.21.0",
+    "base58>=2.1.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/yksanjo/sol-agent-wallet"
+"Repository" = "https://github.com/yksanjo/sol-agent-wallet"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sol_agent_wallet*"]
