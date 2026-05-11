@@ -1,0 +1,23 @@
+{
+  "context_servers": {
+    "sol-agent-wallet": {
+      "command": {
+        "path": "uvx",
+        "args": ["sol-agent-wallet"]
+      },
+      "settings": {}
+    },
+    "_write_mode_template": {
+      "command": {
+        "path": "uvx",
+        "args": ["sol-agent-wallet"],
+        "env": {
+          "SOLANA_PRIVATE_KEY": "PASTE_BURNER_WALLET_BASE58_KEY_HERE",
+          "SOLANA_NETWORK": "devnet",
+          "SOLANA_MAX_TX_SOL": "1.0"
+        }
+      },
+      "settings": {}
+    }
+  }
+}

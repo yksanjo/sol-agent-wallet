@@ -27,9 +27,12 @@ class SolanaRPCClient:
 
     def __init__(
         self,
-        rpc_endpoint: str = "https://api.mainnet-beta.solana.com",
+        rpc_endpoint: str | None = None,
         timeout: float = 30.0,
     ):
+        if rpc_endpoint is None:
+            from ..config import get_config
+            rpc_endpoint = get_config().rpc_endpoint
         self.rpc_endpoint = rpc_endpoint
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)
