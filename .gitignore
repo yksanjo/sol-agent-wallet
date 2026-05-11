@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+
+# Build artifacts
+build/
+dist/
+.eggs/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Test / type caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Demo intermediates — keep demo.gif and demo.mp4 in the repo, ignore the raw
+demo/demo-raw.mov
+demo/palette.png
+
+# Local secrets — defensive, the project itself never reads these files
+*.env
+.env.*
+keypair.json
+id.json

@@ -5,10 +5,12 @@ from __future__ import annotations
 from mcp.types import Tool, TextContent
 from ..clients.solana_rpc import SolanaRPCClient
 from ..clients.jupiter import JupiterClient
+from ..config import get_config, TxCapExceeded
 from ..wallet.manager import WalletManager
 
 
 LAMPORTS_PER_SOL = 1_000_000_000
+SOL_MINT = "So11111111111111111111111111111111111111112"
 
 
 def get_quote_tool() -> Tool:
@@ -95,8 +97,7 @@ async def handle_quote(arguments: dict, wallet: WalletManager | None = None) -> 
     slippage = arguments.get("slippage", 0.5)
     slippage_bps = int(slippage * 100)
 
-    # Convert SOL amount to lamports if input is SOL mint
-    if input_mint == "So11111111111111111111111111111111111111112":
+    if input_mint == SOL_MINT:
         amount_lamports = int(amount * LAMPORTS_PER_SOL)
     else:
         amount_lamports = int(amount * 1_000_000)
@@ -129,38 +130,43 @@ async def handle_swap(arguments: dict, wallet: WalletManager) -> list[TextConten
     amount = arguments["amount"]
     slippage = arguments.get("slippage", 0.5)
     slippage_bps = int(slippage * 100)
+    cfg = get_config()
 
-    # Require write access
     try:
         keypair = wallet.require_write()
     except PermissionError as e:
         return [TextContent(type="text", text=f"❌ {e}")]
 
-    # Convert SOL amount to lamports if input is SOL mint
-    if input_mint == "So11111111111111111111111111111111111111112":
+    # Tx cap enforced only when input is SOL — the cap is denominated in SOL
+    if input_mint == SOL_MINT:
+        try:
+            cfg.check_tx_cap(amount)
+        except TxCapExceeded as e:
+            return [TextContent(type="text", text=f"⛔ {e}")]
+
+    if input_mint == SOL_MINT:
         amount_lamports = int(amount * LAMPORTS_PER_SOL)
     else:
         amount_lamports = int(amount * 1_000_000)
 
     with JupiterClient() as jup:
-        # Get quote
         quote = jup.get_quote(input_mint, output_mint, amount_lamports, slippage_bps)
         if not quote:
             return [TextContent(type="text", text="❌ Could not get a quote for this swap.")]
 
-        # Execute swap
         try:
             result = jup.execute_swap(quote, keypair)
 
             if result.get("success"):
                 sig = result.get("signature", "")
                 out_amount = float(quote.get("outAmount", 0)) / LAMPORTS_PER_SOL
+                network_tag = "" if cfg.is_mainnet else f" [{cfg.network}]"
                 return [TextContent(
                     type="text",
-                    text=f"✅ Swap Executed!\n"
+                    text=f"✅ Swap Executed!{network_tag}\n"
                          f"   Swapped: {amount} → {out_amount:.6f}\n"
                          f"   Signature: {sig}\n"
-                         f"   View: https://solscan.io/tx/{sig}"
+                         f"   View: https://solscan.io/tx/{sig}{cfg.solscan_suffix}"
                 )]
             else:
                 return [TextContent(

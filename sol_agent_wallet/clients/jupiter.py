@@ -145,7 +145,7 @@ class JupiterClient:
         # Sign the transaction
         tx.sign([keypair])
 
-        # Send via RPC
+        # Send via RPC (config-driven endpoint)
         with SolanaRPCClient() as rpc:
             result = rpc.send_and_confirm_transaction(tx)
 

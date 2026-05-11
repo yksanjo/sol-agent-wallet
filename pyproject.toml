@@ -1,11 +1,39 @@
 [project]
 name = "sol-agent-wallet"
 version = "0.1.0"
-description = "The first write-capable Solana AI agent — swap tokens, stake SOL, lend, transfer, and manage your wallet through natural language"
+description = "Write-capable Solana MCP server — swap, send, and manage SOL through Claude, Cursor, or any MCP agent."
 authors = [{ name = "Yoshi Kondo", email = "yoshi@musicailab.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = [
+    "solana",
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "claude",
+    "cursor",
+    "wallet",
+    "web3",
+    "defi",
+    "jupiter",
+    "crypto",
+    "trading",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Internet",
+]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.27.0",
@@ -15,9 +43,21 @@ dependencies = [
     "base58>=2.1.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "build>=1.2.0",
+]
+
+[project.scripts]
+sol-agent-wallet = "sol_agent_wallet.server:cli"
+
 [project.urls]
-"Homepage" = "https://github.com/yksanjo/sol-agent-wallet"
-"Repository" = "https://github.com/yksanjo/sol-agent-wallet"
+Homepage = "https://github.com/yksanjo/sol-agent-wallet"
+Repository = "https://github.com/yksanjo/sol-agent-wallet"
+Issues = "https://github.com/yksanjo/sol-agent-wallet/issues"
+Changelog = "https://github.com/yksanjo/sol-agent-wallet/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = ["setuptools>=68.0"]
@@ -25,3 +65,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["sol_agent_wallet*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

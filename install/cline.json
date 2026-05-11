@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "sol-agent-wallet": {
+      "command": "uvx",
+      "args": ["sol-agent-wallet"],
+      "disabled": false,
+      "autoApprove": []
+    },
+    "_write_mode_template": {
+      "command": "uvx",
+      "args": ["sol-agent-wallet"],
+      "env": {
+        "SOLANA_PRIVATE_KEY": "PASTE_BURNER_WALLET_BASE58_KEY_HERE",
+        "SOLANA_NETWORK": "devnet",
+        "SOLANA_MAX_TX_SOL": "1.0"
+      },
+      "disabled": false,
+      "autoApprove": ["sol_balance", "sol_portfolio", "sol_quote", "sol_search"]
+    }
+  }
+}

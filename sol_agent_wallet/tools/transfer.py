@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from mcp.types import Tool, TextContent
 from ..clients.solana_rpc import SolanaRPCClient
+from ..config import get_config, TxCapExceeded
 from ..wallet.manager import WalletManager
 
 
@@ -36,12 +37,17 @@ async def handle_transfer(arguments: dict, wallet: WalletManager) -> list[TextCo
     to_address = arguments["to_address"]
     amount = arguments["amount"]
     memo = arguments.get("memo", "")
+    cfg = get_config()
 
-    # Require write access
     try:
         keypair = wallet.require_write()
     except PermissionError as e:
         return [TextContent(type="text", text=f"❌ {e}")]
+
+    try:
+        cfg.check_tx_cap(amount)
+    except TxCapExceeded as e:
+        return [TextContent(type="text", text=f"⛔ {e}")]
 
     with SolanaRPCClient() as client:
         try:
@@ -50,14 +56,15 @@ async def handle_transfer(arguments: dict, wallet: WalletManager) -> list[TextCo
             if result.get("success"):
                 sig = result.get("signature", "")
                 slot = result.get("slot", 0)
+                network_tag = "" if cfg.is_mainnet else f" [{cfg.network}]"
                 return [TextContent(
                     type="text",
-                    text=f"✅ Transfer Successful!\n"
+                    text=f"✅ Transfer Successful!{network_tag}\n"
                          f"   Sent: {amount} SOL\n"
                          f"   To: {to_address}\n"
                          f"   Signature: {sig}\n"
                          f"   Slot: {slot}\n"
-                         f"   View: https://solscan.io/tx/{sig}"
+                         f"   View: https://solscan.io/tx/{sig}{cfg.solscan_suffix}"
                 )]
             else:
                 return [TextContent(
