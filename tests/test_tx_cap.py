@@ -51,22 +51,27 @@ async def test_swap_over_cap_when_input_is_sol(low_cap, write_wallet):
 
 
 @pytest.mark.asyncio
-async def test_swap_cap_does_not_apply_when_input_is_non_sol(low_cap, write_wallet, monkeypatch):
-    # When you're swapping USDC → SOL, the `amount` is in USDC units. The SOL cap
-    # doesn't apply at this stage — Jupiter handles the slippage envelope.
-    # We expect the handler to attempt the swap path (which will fail without a real
-    # quote), NOT to short-circuit with a cap error.
-    quote_calls = []
+async def test_swap_cap_applies_when_input_is_non_sol(low_cap, write_wallet, monkeypatch):
+    # AUDIT FIX (#5): swapping USDC → SOL must NOT bypass the SOL cap. The
+    # handler prices the spend in SOL via the quote (outAmount) and rejects it
+    # if it exceeds the cap. Here the quote returns 2 SOL out (> 0.5 cap), so we
+    # expect a ⛔ cap rejection and execute_swap must never be reached.
+    class FakeRPC:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get_token_decimals(self, mint): return 6  # USDC has 6 decimals
 
     class FakeJupiterClient:
         def __init__(self, *a, **kw): pass
         def __enter__(self): return self
         def __exit__(self, *a): pass
         def get_quote(self, *a, **kw):
-            quote_calls.append((a, kw))
-            return None  # Force the handler down the "no quote" branch
-        def execute_swap(self, *a, **kw): pytest.fail("Should not reach execute")
+            # 2 SOL out (in lamports) — well over the 0.5 SOL cap.
+            return {"outAmount": str(2 * 1_000_000_000), "priceImpactPct": "0.001"}
+        def execute_swap(self, *a, **kw): pytest.fail("Should not reach execute — cap must block")
 
+    monkeypatch.setattr("sol_agent_wallet.tools.swap.SolanaRPCClient", FakeRPC)
     monkeypatch.setattr("sol_agent_wallet.tools.swap.JupiterClient", FakeJupiterClient)
 
     [reply] = await handle_swap(
@@ -78,9 +83,58 @@ async def test_swap_cap_does_not_apply_when_input_is_non_sol(low_cap, write_wall
         },
         write_wallet,
     )
-    # The cap check was skipped (input not SOL) → we reached Jupiter's quote call.
-    assert len(quote_calls) == 1
-    assert "Could not get a quote" in reply.text
+    assert "⛔" in reply.text
+    assert "SOLANA_MAX_TX_SOL" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_swap_rejected_on_high_price_impact(write_wallet, monkeypatch):
+    # AUDIT FIX (#7): a swap whose priceImpactPct exceeds the threshold must be
+    # refused. Jupiter reports priceImpactPct as a fraction, so "0.08" == 8% > 5%.
+    class FakeRPC:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get_token_decimals(self, mint): return 6
+
+    class FakeJupiterClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get_quote(self, *a, **kw):
+            # Under the (default 1.0) cap, but 8% price impact.
+            return {"outAmount": str(1_000_000), "priceImpactPct": "0.08"}
+        def execute_swap(self, *a, **kw): pytest.fail("high impact swap must not execute")
+
+    monkeypatch.setattr("sol_agent_wallet.tools.swap.SolanaRPCClient", FakeRPC)
+    monkeypatch.setattr("sol_agent_wallet.tools.swap.JupiterClient", FakeJupiterClient)
+
+    [reply] = await handle_swap(
+        {
+            "input_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "output_mint": SOL_MINT,
+            "amount": 1.0,
+            "slippage": 0.5,
+        },
+        write_wallet,
+    )
+    assert "⛔" in reply.text
+    assert "Price impact" in reply.text
+
+
+@pytest.mark.asyncio
+async def test_swap_rejects_non_positive_amount(write_wallet):
+    # AUDIT FIX (#6): non-positive amounts must be rejected before any conversion.
+    [reply] = await handle_swap(
+        {
+            "input_mint": SOL_MINT,
+            "output_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "amount": 0,
+            "slippage": 0.5,
+        },
+        write_wallet,
+    )
+    assert "❌" in reply.text
 
 
 @pytest.mark.asyncio

@@ -140,10 +140,12 @@ class JupiterClient:
         import base64
 
         tx_bytes = base64.b64decode(swap_data["swapTransaction"])
-        tx = VersionedTransaction.from_bytes(tx_bytes)
+        raw = VersionedTransaction.from_bytes(tx_bytes)
 
-        # Sign the transaction
-        tx.sign([keypair])
+        # Sign the transaction. VersionedTransaction is immutable in solders,
+        # so `raw.sign(...)` would be a no-op — we must construct a NEW signed
+        # transaction from the message and the signer(s).
+        tx = VersionedTransaction(raw.message, [keypair])
 
         # Send via RPC (config-driven endpoint)
         with SolanaRPCClient() as rpc:

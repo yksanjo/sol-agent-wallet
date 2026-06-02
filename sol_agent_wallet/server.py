@@ -1,4 +1,4 @@
-"""Sol Agent Wallet — The first write-capable Solana AI agent.
+"""Sol Agent Wallet — a write-capable Solana MCP server.
 
 Run with:
     uvx sol-agent-wallet

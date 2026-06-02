@@ -11,6 +11,7 @@ from solders.instruction import Instruction
 from solders.message import Message
 from solders.transaction import Transaction
 from solders.keypair import Keypair
+from solders.hash import Hash
 from solders.system_program import transfer, TransferParams
 from solders.commitment_config import CommitmentLevel
 import base58
@@ -106,6 +107,20 @@ class SolanaRPCClient:
     def get_token_supply(self, mint: str) -> dict[str, Any]:
         return self._call("getTokenSupply", [mint])
 
+    def get_token_decimals(self, mint: str) -> int:
+        """Return the on-chain decimals for a token mint.
+
+        Raises if the mint cannot be resolved — callers must NOT silently
+        fall back to a hardcoded decimals value, since that corrupts the
+        lamports/UI-amount conversion and can move the wrong amount of funds.
+        """
+        result = self.get_token_supply(mint)
+        value = result.get("value", {}) if isinstance(result, dict) else {}
+        decimals = value.get("decimals")
+        if decimals is None:
+            raise Exception(f"Could not resolve decimals for mint {mint}")
+        return int(decimals)
+
     def get_account_info(self, address: str) -> dict[str, Any] | None:
         try:
             return self._call("getAccountInfo", [address, {"encoding": "jsonParsed"}])
@@ -184,8 +199,9 @@ class SolanaRPCClient:
         to_pubkey = Pubkey.from_string(to_address)
         lamports = int(amount_sol * LAMPORTS_PER_SOL)
 
-        # Get recent blockhash
-        blockhash = self.get_latest_blockhash()
+        # Get recent blockhash. The RPC returns a base58 string, but
+        # solders.Transaction needs a Hash — convert it explicitly.
+        blockhash = Hash.from_string(self.get_latest_blockhash())
 
         # Create transfer instruction
         ix = transfer(
