@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from mcp.types import Tool, TextContent
 from ..clients.solana_rpc import SolanaRPCClient
 from ..config import get_config, TxCapExceeded
@@ -43,6 +45,14 @@ async def handle_transfer(arguments: dict, wallet: WalletManager) -> list[TextCo
         keypair = wallet.require_write()
     except PermissionError as e:
         return [TextContent(type="text", text=f"❌ {e}")]
+
+    # Reject non-positive / non-finite amounts before converting to lamports.
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        return [TextContent(type="text", text="❌ Amount must be a number.")]
+    if not math.isfinite(amount) or amount <= 0:
+        return [TextContent(type="text", text="❌ Amount must be a positive, finite number.")]
 
     try:
         cfg.check_tx_cap(amount)

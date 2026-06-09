@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from mcp.types import Tool, TextContent
 from ..clients.solana_rpc import SolanaRPCClient
 from ..clients.jupiter import JupiterClient
@@ -11,6 +13,44 @@ from ..wallet.manager import WalletManager
 
 LAMPORTS_PER_SOL = 1_000_000_000
 SOL_MINT = "So11111111111111111111111111111111111111112"
+
+# Safety guards for LLM-supplied parameters.
+MAX_SLIPPAGE_BPS = 500  # 5% — refuse anything looser
+MAX_PRICE_IMPACT_PCT = 5.0  # refuse swaps with >5% price impact
+
+
+class AmountError(ValueError):
+    """Raised when a user-supplied amount is invalid."""
+
+
+def _validate_amount(amount) -> float:
+    """Reject non-positive / non-finite amounts before lamport conversion."""
+    try:
+        amount = float(amount)
+    except (TypeError, ValueError):
+        raise AmountError("Amount must be a number.")
+    if not math.isfinite(amount):
+        raise AmountError("Amount must be a finite number.")
+    if amount <= 0:
+        raise AmountError("Amount must be greater than zero.")
+    return amount
+
+
+def _clamp_slippage_bps(slippage_pct: float) -> int:
+    """Convert a percent slippage to bps, clamped to a sane maximum."""
+    bps = int(slippage_pct * 100)
+    if bps < 0:
+        bps = 0
+    if bps > MAX_SLIPPAGE_BPS:
+        bps = MAX_SLIPPAGE_BPS
+    return bps
+
+
+def _decimals_for_mint(mint: str, rpc: SolanaRPCClient) -> int:
+    """Decimals for a mint. SOL is known; everything else is looked up."""
+    if mint == SOL_MINT:
+        return 9
+    return rpc.get_token_decimals(mint)
 
 
 def get_quote_tool() -> Tool:
@@ -93,24 +133,33 @@ def get_search_tool() -> Tool:
 async def handle_quote(arguments: dict, wallet: WalletManager | None = None) -> list[TextContent]:
     input_mint = arguments["input_mint"]
     output_mint = arguments["output_mint"]
-    amount = arguments["amount"]
     slippage = arguments.get("slippage", 0.5)
-    slippage_bps = int(slippage * 100)
+    slippage_bps = _clamp_slippage_bps(slippage)
 
-    if input_mint == SOL_MINT:
-        amount_lamports = int(amount * LAMPORTS_PER_SOL)
-    else:
-        amount_lamports = int(amount * 1_000_000)
+    try:
+        amount = _validate_amount(arguments["amount"])
+    except AmountError as e:
+        return [TextContent(type="text", text=f"❌ {e}")]
+
+    with SolanaRPCClient() as rpc:
+        try:
+            input_decimals = _decimals_for_mint(input_mint, rpc)
+            output_decimals = _decimals_for_mint(output_mint, rpc)
+        except Exception as e:
+            return [TextContent(type="text", text=f"❌ Could not resolve token decimals: {e}")]
+
+    amount_base_units = int(amount * (10 ** input_decimals))
 
     with JupiterClient() as jup:
-        quote = jup.get_quote(input_mint, output_mint, amount_lamports, slippage_bps)
+        quote = jup.get_quote(input_mint, output_mint, amount_base_units, slippage_bps)
 
         if not quote:
             return [TextContent(type="text", text="❌ Could not get a quote. Check token addresses and try again.")]
 
-        in_amount = float(quote.get("inAmount", 0)) / LAMPORTS_PER_SOL
-        out_amount = float(quote.get("outAmount", 0)) / LAMPORTS_PER_SOL
-        price_impact = float(quote.get("priceImpactPct", 0))
+        in_amount = float(quote.get("inAmount", 0)) / (10 ** input_decimals)
+        out_amount = float(quote.get("outAmount", 0)) / (10 ** output_decimals)
+        # Jupiter returns priceImpactPct as a decimal fraction ("0.01" == 1%).
+        price_impact = float(quote.get("priceImpactPct", 0) or 0) * 100
         routes = len(quote.get("routePlan", []))
 
         result = f"🔄 Swap Quote\n\n"
@@ -124,12 +173,34 @@ async def handle_quote(arguments: dict, wallet: WalletManager | None = None) -> 
         return [TextContent(type="text", text=result)]
 
 
+def _quoted_sol_value(
+    input_mint: str,
+    output_mint: str,
+    amount: float,
+    amount_base_units: int,
+    quote: dict,
+    output_decimals: int,
+    jup: JupiterClient,
+) -> float | None:
+    """Best-effort SOL value of a swap, used to enforce the spend cap on
+    SPL-input swaps. Returns None if it cannot be determined."""
+    # SOL on either leg gives the value directly.
+    if input_mint == SOL_MINT:
+        return amount
+    if output_mint == SOL_MINT:
+        return float(quote.get("outAmount", 0)) / LAMPORTS_PER_SOL
+    # Neither leg is SOL: quote the input -> SOL to price the spend in SOL.
+    sol_quote = jup.get_quote(input_mint, SOL_MINT, amount_base_units, 50)
+    if sol_quote:
+        return float(sol_quote.get("outAmount", 0)) / LAMPORTS_PER_SOL
+    return None
+
+
 async def handle_swap(arguments: dict, wallet: WalletManager) -> list[TextContent]:
     input_mint = arguments["input_mint"]
     output_mint = arguments["output_mint"]
-    amount = arguments["amount"]
     slippage = arguments.get("slippage", 0.5)
-    slippage_bps = int(slippage * 100)
+    slippage_bps = _clamp_slippage_bps(slippage)
     cfg = get_config()
 
     try:
@@ -137,29 +208,68 @@ async def handle_swap(arguments: dict, wallet: WalletManager) -> list[TextConten
     except PermissionError as e:
         return [TextContent(type="text", text=f"❌ {e}")]
 
-    # Tx cap enforced only when input is SOL — the cap is denominated in SOL
+    try:
+        amount = _validate_amount(arguments["amount"])
+    except AmountError as e:
+        return [TextContent(type="text", text=f"❌ {e}")]
+
+    # Fast path: SOL input is already denominated in SOL, so enforce the cap
+    # immediately — before any network call.
     if input_mint == SOL_MINT:
         try:
             cfg.check_tx_cap(amount)
         except TxCapExceeded as e:
             return [TextContent(type="text", text=f"⛔ {e}")]
 
-    if input_mint == SOL_MINT:
-        amount_lamports = int(amount * LAMPORTS_PER_SOL)
-    else:
-        amount_lamports = int(amount * 1_000_000)
+    with SolanaRPCClient() as rpc:
+        try:
+            input_decimals = _decimals_for_mint(input_mint, rpc)
+            output_decimals = _decimals_for_mint(output_mint, rpc)
+        except Exception as e:
+            return [TextContent(type="text", text=f"❌ Could not resolve token decimals: {e}")]
+
+    amount_base_units = int(amount * (10 ** input_decimals))
 
     with JupiterClient() as jup:
-        quote = jup.get_quote(input_mint, output_mint, amount_lamports, slippage_bps)
+        quote = jup.get_quote(input_mint, output_mint, amount_base_units, slippage_bps)
         if not quote:
             return [TextContent(type="text", text="❌ Could not get a quote for this swap.")]
+
+        # Spend cap — enforced for ALL swaps, denominated in SOL. For SPL
+        # inputs we price the spend in SOL via the quote so "swap all my USDC"
+        # cannot bypass the cap.
+        sol_value = _quoted_sol_value(
+            input_mint, output_mint, amount, amount_base_units, quote, output_decimals, jup
+        )
+        if sol_value is None:
+            return [TextContent(
+                type="text",
+                text="❌ Could not price this swap in SOL to enforce the spend cap. Aborting.",
+            )]
+        try:
+            cfg.check_tx_cap(sol_value)
+        except TxCapExceeded as e:
+            return [TextContent(type="text", text=f"⛔ {e}")]
+
+        # Price-impact guard — refuse swaps that move the price too much.
+        # Jupiter returns priceImpactPct as a decimal FRACTION string
+        # (e.g. "0.01" == 1%), so multiply by 100 to get a percentage.
+        price_impact_pct = abs(float(quote.get("priceImpactPct", 0) or 0)) * 100
+        if price_impact_pct > MAX_PRICE_IMPACT_PCT:
+            return [TextContent(
+                type="text",
+                text=(
+                    f"⛔ Price impact {price_impact_pct:.2f}% exceeds the "
+                    f"{MAX_PRICE_IMPACT_PCT:.0f}% limit. Swap refused."
+                ),
+            )]
 
         try:
             result = jup.execute_swap(quote, keypair)
 
             if result.get("success"):
                 sig = result.get("signature", "")
-                out_amount = float(quote.get("outAmount", 0)) / LAMPORTS_PER_SOL
+                out_amount = float(quote.get("outAmount", 0)) / (10 ** output_decimals)
                 network_tag = "" if cfg.is_mainnet else f" [{cfg.network}]"
                 return [TextContent(
                     type="text",

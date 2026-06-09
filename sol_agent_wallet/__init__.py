@@ -1,3 +1,3 @@
-"""sol-agent-wallet — The first write-capable Solana AI agent."""
+"""sol-agent-wallet — a write-capable Solana MCP server."""
 
 __version__ = "0.1.0"
